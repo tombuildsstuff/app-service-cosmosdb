@@ -61,12 +61,31 @@ describe("initContainer retry", () => {
     expect(attempts()).toBe(3);
   });
 
-  it("does not retry a non-transient auth failure (403)", async () => {
+  it("retries a 403 under managed identity while the RBAC grant propagates", async () => {
+    // At cold start the Cosmos data-plane role assignment can lag the app: the
+    // grant is created after the web app and Azure takes time to propagate it,
+    // so an initial Forbidden clears itself once the role lands.
+    const err = transient(403, "Forbidden");
+    const { client, container, attempts } = clientThatFails([err, err]);
+
+    const result = await initContainer(client, cfg, { sleep: noSleep });
+
+    expect(result).toBe(container);
+    expect(attempts()).toBe(3);
+  });
+
+  it("does not retry a 403 when authenticating with a key", async () => {
+    // With a key there is no role assignment to propagate, so a Forbidden is a
+    // real permission error; retrying only delays the inevitable failure.
+    const keyCfg: Config = {
+      ...cfg,
+      cosmos: { ...cfg.cosmos, authMode: "key", key: "secret" },
+    };
     const err = transient(403, "Forbidden");
     const { client, attempts } = clientThatFails([err, err]);
 
     await expect(
-      initContainer(client, cfg, { sleep: noSleep }),
+      initContainer(client, keyCfg, { sleep: noSleep }),
     ).rejects.toThrow(/Forbidden/);
     expect(attempts()).toBe(1);
   });

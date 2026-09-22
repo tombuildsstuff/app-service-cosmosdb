@@ -41,8 +41,9 @@ const defaultSleep = (ms: number): Promise<void> =>
 
 // Transient failures worth retrying at cold start: the dependency (DNS,
 // Cosmos, or — under Locally — the injected resolver) may not be ready yet.
-// Auth/permission and client errors (401/403/400/404) are NOT here: retrying
-// them just delays a failure that will never resolve on its own.
+// Client errors (400/404) and a key-auth 401/403 are NOT here: retrying them
+// just delays a failure that will never resolve on its own. A 403 under managed
+// identity is the exception — see isTransientStartupError.
 const TRANSIENT_SYSTEM_CODES = new Set([
   "EAI_AGAIN",
   "ENOTFOUND",
@@ -55,10 +56,23 @@ const TRANSIENT_SYSTEM_CODES = new Set([
 ]);
 const TRANSIENT_HTTP_CODES = new Set([408, 429, 500, 502, 503, 504]);
 
-export function isTransientStartupError(err: unknown): boolean {
+/**
+ * Whether a startup failure is worth retrying.
+ *
+ * Under managed identity ("aad") a 403 is transient at cold start: the Cosmos
+ * data-plane RBAC role assignment can lag the app coming up — its principal
+ * only exists once the app does, so the grant is created after the web app, and
+ * Azure then takes time to propagate it. So an initial "Forbidden" clears itself
+ * once the role lands. With a key there is no grant to propagate, so a 403 is a
+ * real permission error and is not retried.
+ */
+export function isTransientStartupError(err: unknown, cfg: Config): boolean {
   const code = (err as { code?: unknown } | null)?.code;
   if (typeof code === "string") return TRANSIENT_SYSTEM_CODES.has(code);
-  if (typeof code === "number") return TRANSIENT_HTTP_CODES.has(code);
+  if (typeof code === "number") {
+    if (TRANSIENT_HTTP_CODES.has(code)) return true;
+    if (code === 403 && cfg.cosmos.authMode === "aad") return true;
+  }
   return false;
 }
 
@@ -96,7 +110,7 @@ export async function initContainer(
       });
       return container;
     } catch (err) {
-      if (attempt >= maxAttempts || !isTransientStartupError(err)) throw err;
+      if (attempt >= maxAttempts || !isTransientStartupError(err, cfg)) throw err;
       const delayMs = Math.min(maxDelayMs, initialDelayMs * 2 ** (attempt - 1));
       onRetry(err, attempt, delayMs);
       await sleep(delayMs);
