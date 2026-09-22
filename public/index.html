@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tasks</title>
+    <style>
+      body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; padding: 0 1rem; }
+      h1 { font-size: 1.5rem; }
+      form { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+      input[type="text"] { flex: 1; padding: 0.5rem; }
+      button { padding: 0.5rem 0.75rem; cursor: pointer; }
+      ul { list-style: none; padding: 0; }
+      li { display: flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0; border-bottom: 1px solid #eee; }
+      li.done span { text-decoration: line-through; color: #999; }
+      li span { flex: 1; }
+    </style>
+  </head>
+  <body>
+    <h1>Tasks</h1>
+    <form id="add-form">
+      <input id="title" type="text" placeholder="New task…" autocomplete="off" required />
+      <button type="submit">Add</button>
+    </form>
+    <ul id="list"></ul>
+
+    <script>
+      const list = document.getElementById("list");
+      const form = document.getElementById("add-form");
+      const titleInput = document.getElementById("title");
+
+      async function api(path, options) {
+        const res = await fetch(path, {
+          headers: { "Content-Type": "application/json" },
+          ...options,
+        });
+        if (!res.ok && res.status !== 204) throw new Error("Request failed: " + res.status);
+        return res.status === 204 ? null : res.json();
+      }
+
+      function render(tasks) {
+        list.innerHTML = "";
+        for (const t of tasks) {
+          const li = document.createElement("li");
+          if (t.completed) li.className = "done";
+
+          const cb = document.createElement("input");
+          cb.type = "checkbox";
+          cb.checked = t.completed;
+          cb.addEventListener("change", async () => {
+            await api("/api/tasks/" + t.id, {
+              method: "PATCH",
+              body: JSON.stringify({ completed: cb.checked }),
+            });
+            load();
+          });
+
+          const span = document.createElement("span");
+          span.textContent = t.title;
+
+          const del = document.createElement("button");
+          del.textContent = "✕";
+          del.addEventListener("click", async () => {
+            await api("/api/tasks/" + t.id, { method: "DELETE" });
+            load();
+          });
+
+          li.append(cb, span, del);
+          list.appendChild(li);
+        }
+      }
+
+      async function load() {
+        render(await api("/api/tasks"));
+      }
+
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const title = titleInput.value.trim();
+        if (!title) return;
+        await api("/api/tasks", { method: "POST", body: JSON.stringify({ title }) });
+        titleInput.value = "";
+        load();
+      });
+
+      load();
+    </script>
+  </body>
+</html>

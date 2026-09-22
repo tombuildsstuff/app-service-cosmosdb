@@ -1,0 +1,37 @@
+services:
+  cosmos:
+    image: mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:vnext-preview
+    container_name: cosmos-emulator
+    ports:
+      - "8081:8081"
+      - "1234:1234"
+    environment:
+      PROTOCOL: https
+    # The emulator takes ~30-60s to become ready on first start; the
+    # healthcheck below lets the app wait for it instead of racing it.
+    healthcheck:
+      test: ["CMD", "curl", "-fsk", "https://localhost:8081/"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 10s
+
+  app:
+    build: .
+    depends_on:
+      cosmos:
+        condition: service_healthy
+    # The app connects to Cosmos once at startup and exits on failure
+    # (see src/server.ts); restart so it retries if it starts before
+    # the emulator has fully warmed up.
+    restart: on-failure:10
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: "3000"
+      COSMOS_ENDPOINT: "https://cosmos:8081"
+      COSMOS_AUTH_MODE: "key"
+      COSMOS_KEY: "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw=="
+      COSMOS_DATABASE: "tasksdb"
+      COSMOS_CONTAINER: "tasks"
+      COSMOS_TLS_INSECURE: "true"
